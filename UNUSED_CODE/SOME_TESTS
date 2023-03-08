@@ -1,0 +1,220 @@
+// Code for finding the smallest elements. Replaced by cuBLAS
+
+#include "DEBUGGING.h"
+#include <stdint.h>
+#include <cuda_runtime.h>
+#include <limits>
+
+#define BLOCKSIZE 32
+
+// ccpp = calculate compare position pointer
+__device__ int ccpp(int num, int lCoeff, int nHypothesis) {
+    return num * (lCoeff + sizeof(float) + nHypothesis*sizeof(uint64_t)) + lCoeff;
+}
+
+__global__ void reduceToMinimumGPUKernel(char* inArr, float* outArr, int lCoeff, int nHypothesis) {
+    __shared__ float minshared[BLOCKSIZE];
+
+    unsigned int tid = threadIdx.x;
+    unsigned int idx = blockDim.x * blockIdx.x + threadIdx.x;
+    minshared[tid] = inArr[ccpp(idx, lCoeff, nHypothesis)];
+
+    __syncthreads();
+
+    for (unsigned int s = 1; s < blockDim.x; s *= 2) {
+        if (s * 2 * tid < blockDim.x) {
+            minshared[tid] = min(minshared[tid], minshared[tid + s]);
+        }
+        __syncthreads();
+    }
+
+    // assume thread 0 now contains minimum value
+    if(tid == 0) {
+        outArr[blockIdx.x] = minshared[0];
+    }
+}
+
+float reduceToMinimumGPU(int nHypothesis, int lengthCoefficients, float* prefixLengthOffset, char* arr, int arrLength) {
+    int BLOCK_SIZE = BLOCKSIZE;
+    int GRID_SIZE = arrLength / BLOCK_SIZE;
+
+    char* arrGPU;
+    cudaMalloc((void **)&arrGPU,arrLength);
+    cudaMemcpy(arrGPU, arr, arrLength, cudaMemcpyHostToDevice);
+
+    float* outMem = (float *)malloc(GRID_SIZE * sizeof(float))
+    float* outMemGPU;
+    cudaMalloc((void **)&outMemGPU, arrLength);
+
+    reduceToMinimumGPUKernel<<<GRID_SIZE, BLOCK_SIZE>>>(arrGPU, outMemGPU, lengthCoefficients, nHypothesis);
+
+    cudaMemcpy(outMem, outMemGPU, GRID_SIZE* sizeof(float), cudaMemcpyDeviceToHost);
+
+    // Take the last step on the CPU
+    float minVal = std::numeric_limits<float>::max();
+
+    for(int i = 0; i < GRID_SIZE; i++) {
+        minVal = min(minVal, outMem[i])
+    }
+
+    return minVal;
+}
+
+
+
+// Code for swapping two rows with row-major matrix on host memory
+
+/*
+ * Swaps rows x and y in the matrix (inplace).
+ * rowSize is the amount of bytes per row in the matrix.
+ *
+ * NOT TESTED YET
+ */
+void swapMatrix(char* matrix, const size_t rowSize, const int x, const int y) {
+  static char* buffer = NULL;
+  static size_t bufferSize = 0;
+  if (rowSize > bufferSize) {
+    if (buffer != NULL) free(buffer);
+    buffer = (char*) malloc(rowSize);
+    bufferSize = rowSize;
+  }
+
+  memcpy(buffer, matrix + rowSize * x, rowSize);
+  memcpy(matrix + rowSize * y, matrix + rowSize * x, rowSize);
+  memcpy(matrix + rowSize * x, buffer, rowSize);
+}
+
+
+
+// Some "Uber" unified kernel for least squares matrices preperation. Definitely untested
+
+
+
+/*
+Untested reference implementation
+*/
+__global__ void kernelUber
+(uint64_t nThreads, int nMeasurements, int nCoefficients, int nDimensions, int functionMasks[MAX_DIMENSIONS],
+  float* hypothesisMem, size_t measurementsPitch, float* __restrict__ measurements) {
+  uint64_t tid = (blockDim.x * blockIdx.x) + threadIdx.x;
+  if (tid >= nThreads)
+    return;
+
+  float is[MAX_DIMENSIONS];
+  float js[MAX_DIMENSIONS];
+
+  uint64_t tidTemp = tid;
+  for (int i = 0; i < MAX_DIMENSIONS; ++i) {
+    is[i] = I_gpu[tid % sizeI];
+    tid /= sizeI;
+    js[i] = J_gpu[tid % sizeJ];
+    tid /= sizeJ;
+  }
+  tid = tidTemp;
+
+  float* startAddress = &hypothesisMem[tid * (nCoefficients * nMeasurements)];
+
+  for (int x = 0; x < nMeasurements; ++x) {
+    float* pElement = (float*)((char*)measurements + x * measurementsPitch);
+
+    for (int y = 0; y < nCoefficients; ++y) {
+      int mask = functionMasks[y];
+      float term = 1;
+      for (int z = 0; z < nDimensions; ++z) {
+        term *= mask & 1 ? powf(pElement[z], is[z]) * powf(log2f(pElement[z]), js[z]) : 1;
+        mask >>= 1;
+      }
+      startAddress[nCoefficients * x + y] = term;
+    }
+    startAddress[nCoefficients * x + (nCoefficients - 1)] = 1;
+  }
+}
+
+
+
+
+
+// SOME CUBLAS TEST
+
+/*
+Here is the matrix A:
+ -1 -0.0827
+ -0.737  0.0655
+  0.511  -0.562
+Here is the right hand side b:
+-0.906
+ 0.358
+ 0.359
+The least-squares solution is:
+0.464
+0.043
+*/
+  float A[6] = {-1,-0.737,0.511,-0.0827,0.0655,-0.562};
+  float b[3] = {-0.906,0.358,0.359};
+
+  float* Ad;
+  float* bd;
+  cudaMalloc((void**) &Ad, sizeof(float) * 6);
+  cudaMalloc((void**) &bd, sizeof(float) * 3);
+  cudaMemcpy(Ad, A, sizeof(float) * 6, cudaMemcpyHostToDevice);
+  cudaMemcpy(bd, b, sizeof(float) * 3, cudaMemcpyHostToDevice);
+
+    float** pA = (float**) malloc(sizeof(float*));
+    pA[0] = Ad;
+    float** pB = (float**) malloc(sizeof(float*));
+    pB[0] = bd;
+
+    printf("%ld\n", Ad);
+    printf("%ld\n", bd);
+    printf("%ld\n", pA[0]);
+    printf("%ld\n", pB[0]);
+
+    float** pointerToAs;
+    float** pointerToBs;
+  cudaMalloc((void**) &pointerToAs, sizeof(float*) * 1);
+  cudaMalloc((void**) &pointerToBs, sizeof(float*) * 1);
+  cudaMemcpy(pointerToAs, pA, sizeof(float*) * 1, cudaMemcpyHostToDevice);
+  cudaMemcpy(pointerToBs, pB, sizeof(float*) * 1, cudaMemcpyHostToDevice);
+
+    cublasHandle_t handle;
+    cublasStatus_t stat;
+
+    stat = cublasCreate(&handle);
+    if (stat != CUBLAS_STATUS_SUCCESS) {
+        printf ("CUBLAS initialization failed\n");
+        return 0;
+    }
+
+    int info;
+  stat = cublasSgelsBatched(handle,
+                                   CUBLAS_OP_N,
+                                   3,
+                                   2,
+                                   1,
+                                   pointerToAs,
+                                   3,
+                                   pointerToBs,
+                                   3,
+                                   &info,
+                                   NULL,
+                                   1);
+
+  printf("no error status: %d\n", CUBLAS_STATUS_SUCCESS);
+  printf("status: %d\n", stat);
+
+  if (info != 0) {
+    printf("Hab was falsch %d\n", info);
+  }
+
+  cudaMemcpy(b, bd, sizeof(float) * 3, cudaMemcpyDeviceToHost);
+
+  printf("%f\n", b[0]);
+  printf("%f\n", b[1]);
+  printf("%f\n", b[2]);
+
+  cudaFree(Ad);
+  cudaFree(bd);
+  cudaFree(pointerToAs);
+  cudaFree(pointerToBs);
+
+    cublasDestroy(handle);

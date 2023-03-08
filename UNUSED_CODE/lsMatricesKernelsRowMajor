@@ -1,0 +1,213 @@
+// Header for two dimensions
+#define HEADER_TWO_IJ(nCoefficients)                        \
+    uint64_t tid = (blockDim.x * blockIdx.x) + threadIdx.x; \
+	if (tid >= nThreads)                                    \
+		return;                                             \
+	uint64_t tidTemp = tid;                                 \
+	float i1 = I_gpu[tid % sizeI];                          \
+	tid /= sizeI;                                           \
+	float j1 = J_gpu[tid % sizeJ];                          \
+	tid /= sizeJ;                                           \
+	float i2 = I_gpu[tid % sizeI];                          \
+	tid /= sizeI;                                           \
+	float j2 = J_gpu[tid];                                  \
+	tid = tidTemp;                                          \
+	float* startAddress = &hypothesisMem[tid * (nCoefficients * nMeasurements)];\
+
+// Header for three dimensions
+#define HEADER_THREE_IJ(nCoefficients)                      \
+	uint64_t tid = (blockDim.x * blockIdx.x) + threadIdx.x; \
+	if (tid >= nThreads)                                    \
+		return;                                             \
+	uint64_t tidTemp = tid;                                 \
+	float i1 = I_gpu[tid % sizeI];                          \
+	tid /= sizeI;                                           \
+	float j1 = J_gpu[tid % sizeJ];                          \
+	tid /= sizeJ;                                           \
+	float i2 = I_gpu[tid % sizeI];                          \
+	tid /= sizeI;                                           \
+	float j2 = J_gpu[tid % sizeJ];                          \
+	tid /= sizeJ;                                           \
+	float i3 = I_gpu[tid % sizeI];                          \
+	tid /= sizeI;                                           \
+	float j3 = J_gpu[tid];                                  \
+	tid = tidTemp;                                          \
+	float is[3] = {i1,i2,i3};                               \
+	float js[3] = {j1,j2,j3};                               \
+	float* startAddress = &hypothesisMem[tid * (nCoefficients * nMeasurements)];\
+
+struct selects {
+	int aSelect;
+	int bSelect;
+	int cSelect;
+	int dSelect;
+	int eSelect;
+	int fSelect;
+};
+
+// a * b (2 Parameters)
+// There is only one instance of this kernel ever being used:
+// The a * b case for 2 dimensions.
+// Therefore this kernel does not use selects for a and b
+__global__ void kernelAxB(selects s, uint64_t nThreads, int nMeasurements, float* hypothesisMem, size_t measurementsPitch, float* __restrict__ measurements) {
+	HEADER_TWO_IJ(2)
+	for (int x = 0; x < nMeasurements; ++x) {
+		float* pElement = (float*)((char*)measurements + x * measurementsPitch);
+		float a = pElement[0];
+		float b = pElement[1];
+		startAddress[2 * x] = powf(a, i1) * powf(log2f(a), j1) * powf(b, i2) * powf(log2f(b), j2);
+		startAddress[2 * x + 1] = 1;
+	}
+}
+
+// a + b (3 Parameters)
+// There is only one instance of this kernel ever being used:
+// The a + b case for 2 dimensions.
+// Therefore this kernel does not use selects for a and b
+__global__ void kernelApB(selects s, uint64_t nThreads, int nMeasurements, float* hypothesisMem, size_t measurementsPitch, float* __restrict__ measurements) {
+	HEADER_TWO_IJ(3)
+	for (int x = 0; x < nMeasurements; ++x) {
+		float* pElement = (float*)((char*)measurements + x * measurementsPitch);
+		float a = pElement[0];
+		float b = pElement[1];
+		startAddress[3 * x] = powf(a, i1) * powf(log2f(a), j1);
+		startAddress[3 * x + 1] = powf(b, i2) * powf(log2f(b), j2);
+		startAddress[3 * x + 2] = 1;
+	}
+}
+
+// a * b * c (2 Parameters)
+// There is only one instance of this kernel ever being used:
+// The a * b * c case for 3 dimensions.
+// Therefore this kernel does not use selects for a, b and c
+__global__ void kernelAxBxC(selects s, uint64_t nThreads, int nMeasurements, float* hypothesisMem, size_t measurementsPitch, float* __restrict__ measurements) {
+	HEADER_THREE_IJ(2)
+	for (int x = 0; x < nMeasurements; ++x) {
+		float* pElement = (float*)((char*)measurements + x * measurementsPitch);
+		float a = pElement[0];
+		float b = pElement[1];
+		float c = pElement[2];
+		startAddress[2 * x] = powf(a, i1) * powf(log2f(a), j1) * powf(b, i2) * powf(log2f(b), j2) * powf(c, i3) * powf(log2f(c), j3);
+		startAddress[2 * x + 1] = 1;
+	}
+}
+
+// a + b + c (4 Parameters)
+// There is only one instance of this kernel ever being used:
+// The a + b + c case for 3 dimensions.
+// Therefore this kernel does not use selects for a, b and c
+__global__ void kernelApBpC(selects s, uint64_t nThreads, int nMeasurements, float* hypothesisMem, size_t measurementsPitch, float* __restrict__ measurements) {
+	HEADER_THREE_IJ(4)
+	for (int x = 0; x < nMeasurements; ++x) {
+		float* pElement = (float*)((char*)measurements + x * measurementsPitch);
+		float a = pElement[0];
+		float b = pElement[1];
+		float c = pElement[2];
+		startAddress[4 * x] = powf(a, i1) * powf(log2f(a), j1);
+		startAddress[4 * x + 1] = powf(b, i2) * powf(log2f(b), j2);
+		startAddress[4 * x + 2] = powf(c, i3) * powf(log2f(c), j3);
+		startAddress[4 * x + 3] = 1;
+	}
+}
+
+// a * b + c (3 Parameters)
+// There are several cases for this kernel being used, both 2 and 3 dimensions
+__global__ void kernelAxBpC(selects s, uint64_t nThreads, int nMeasurements, float* hypothesisMem, size_t measurementsPitch, float* __restrict__ measurements) {
+	HEADER_THREE_IJ(3)
+	for (int x = 0; x < nMeasurements; ++x) {
+		float* pElement = (float*)((char*)measurements + x * measurementsPitch);
+		float a = pElement[s.aSelect];
+		float b = pElement[s.bSelect];
+		float c = pElement[s.cSelect];
+		startAddress[3 * x] = powf(a, is[s.aSelect]) * powf(log2f(a), js[s.aSelect]) * powf(b, is[s.bSelect]) * powf(log2f(b), js[s.bSelect]);
+		startAddress[3 * x + 1] = powf(c, is[s.cSelect]) * powf(log2f(c), js[s.cSelect]);
+		startAddress[3 * x + 2] = 1;
+	}
+}
+
+// a * b * c + d (3 Parameters)
+// There are several cases for this kernel being used, only in 3 dimensions
+__global__ void kernelAxBxCpD(selects s, uint64_t nThreads, int nMeasurements, float* hypothesisMem, size_t measurementsPitch, float* __restrict__ measurements) {
+	HEADER_THREE_IJ(3)
+	for (int x = 0; x < nMeasurements; ++x) {
+		float* pElement = (float*)((char*)measurements + x * measurementsPitch);
+		float a = pElement[s.aSelect];
+		float b = pElement[s.bSelect];
+		float c = pElement[s.cSelect];
+		float d = pElement[s.dSelect];
+		startAddress[3 * x] = powf(a, is[s.aSelect]) * powf(log2f(a), js[s.aSelect]) * powf(b, is[s.bSelect]) * powf(log2f(b), js[s.bSelect]) * powf(c, is[s.cSelect]) * powf(log2f(c), js[s.cSelect]);
+		startAddress[3 * x + 1] = powf(d, is[s.dSelect]) * powf(log2f(d), js[s.dSelect]);
+		startAddress[3 * x + 2] = 1;
+	}
+}
+
+// a * b + c + d (4 Parameters)
+// There are several cases for this kernel being used, only in 3 dimensions
+__global__ void kernelAxBpCpD(selects s, uint64_t nThreads, int nMeasurements, float* hypothesisMem, size_t measurementsPitch, float* __restrict__ measurements) {
+	HEADER_THREE_IJ(4)
+	for (int x = 0; x < nMeasurements; ++x) {
+		float* pElement = (float*)((char*)measurements + x * measurementsPitch);
+		float a = pElement[s.aSelect];
+		float b = pElement[s.bSelect];
+		float c = pElement[s.cSelect];
+		float d = pElement[s.dSelect];
+		startAddress[4 * x] = powf(a, is[s.aSelect]) * powf(log2f(a), js[s.aSelect]) * powf(b, is[s.bSelect]) * powf(log2f(b), js[s.bSelect]);
+		startAddress[4 * x + 1] = powf(c, is[s.cSelect]) * powf(log2f(c), js[s.cSelect]);
+		startAddress[4 * x + 2] = powf(d, is[s.dSelect]) * powf(log2f(d), js[s.dSelect]);
+		startAddress[4 * x + 3] = 1;
+	}
+}
+
+// a * b * c + d * e (3 Parameters)
+// There are several cases for this kernel being used, only in 3 dimensions
+__global__ void kernelAxBxCpDxE(selects s, uint64_t nThreads, int nMeasurements, float* hypothesisMem, size_t measurementsPitch, float* __restrict__ measurements) {
+	HEADER_THREE_IJ(3)
+	for (int x = 0; x < nMeasurements; ++x) {
+		float* pElement = (float*)((char*)measurements + x * measurementsPitch);
+		float a = pElement[s.aSelect];
+		float b = pElement[s.bSelect];
+		float c = pElement[s.cSelect];
+		float d = pElement[s.dSelect];
+		float e = pElement[s.eSelect];
+		startAddress[3 * x] = powf(a, is[s.aSelect]) * powf(log2f(a), js[s.aSelect]) * powf(b, is[s.bSelect]) * powf(log2f(b), js[s.bSelect]) * powf(c, is[s.cSelect]) * powf(log2f(c), js[s.cSelect]);
+		startAddress[3 * x + 1] = powf(d, is[s.dSelect]) * powf(log2f(d), js[s.dSelect]) * powf(e, is[s.eSelect]) * powf(log2f(e), js[s.eSelect]);
+		startAddress[3 * x + 2] = 1;
+	}
+}
+
+// a * b * c + d + e (4 Parameters)
+// There are several cases for this kernel being used, only in 3 dimensions
+__global__ void kernelAxBxCpDpE(selects s, uint64_t nThreads, int nMeasurements, float* hypothesisMem, size_t measurementsPitch, float* __restrict__ measurements) {
+	HEADER_THREE_IJ(4)
+	for (int x = 0; x < nMeasurements; ++x) {
+		float* pElement = (float*)((char*)measurements + x * measurementsPitch);
+		float a = pElement[s.aSelect];
+		float b = pElement[s.bSelect];
+		float c = pElement[s.cSelect];
+		float d = pElement[s.dSelect];
+		float e = pElement[s.eSelect];
+		startAddress[4 * x] = powf(a, is[s.aSelect]) * powf(log2f(a), js[s.aSelect]) * powf(b, is[s.bSelect]) * powf(log2f(b), js[s.bSelect]) * powf(c, is[s.cSelect]) * powf(log2f(c), js[s.cSelect]);
+		startAddress[4 * x + 1] = powf(d, is[s.dSelect]) * powf(log2f(d), js[s.dSelect]);
+		startAddress[4 * x + 2] = powf(e, is[s.eSelect]) * powf(log2f(e), js[s.eSelect]);
+		startAddress[4 * x + 3] = 1;
+	}
+}
+
+// a * b * c + d * e + f (4 Parameters)
+// There are several cases for this kernel being used, only in 3 dimensions
+__global__ void kernelAxBxCpDxEpF(selects s, uint64_t nThreads, int nMeasurements, float* hypothesisMem, size_t measurementsPitch, float* __restrict__ measurements) {
+	HEADER_THREE_IJ(4)
+	for (int x = 0; x < nMeasurements; ++x) {
+		float* pElement = (float*)((char*)measurements + x * measurementsPitch);
+		float a = pElement[s.aSelect];
+		float b = pElement[s.bSelect];
+		float c = pElement[s.cSelect];
+		float d = pElement[s.dSelect];
+		float e = pElement[s.eSelect];
+		float f = pElement[s.fSelect];
+		startAddress[4 * x] = powf(a, is[s.aSelect]) * powf(log2f(a), js[s.aSelect]) * powf(b, is[s.bSelect]) * powf(log2f(b), js[s.bSelect]) * powf(c, is[s.cSelect]) * powf(log2f(c), js[s.cSelect]);
+		startAddress[4 * x + 1] = powf(d, is[s.dSelect]) * powf(log2f(d), js[s.dSelect]) * powf(e, is[s.eSelect]) * powf(log2f(e), js[s.eSelect]);
+		startAddress[4 * x + 2] = powf(f, is[s.fSelect]) * powf(log2f(f), js[s.fSelect]);
+		startAddress[4 * x + 3] = 1;
+	}
+}

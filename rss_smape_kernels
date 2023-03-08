@@ -1,0 +1,47 @@
+#define HEADER_RSS_SMAPE_KERNELS                           \
+	uint64_t tid = (blockDim.x * blockIdx.x) + threadIdx.x;\
+	if (tid >= nThreads)                                   \
+		return;                                            \
+	float is[MAX_DIMENSIONS];							   \
+	float js[MAX_DIMENSIONS];							   \
+	uint64_t tidTemp = tid;								   \
+	tid += batch;										   \
+	for (int i = 0; i < MAX_DIMENSIONS; ++i) {\
+		is[i] = I_gpu[tid % sizeI];\
+		tid /= sizeI;\
+		js[i] = J_gpu[tid % sizeJ];\
+		tid /= sizeJ;\
+	}\
+	tid = tidTemp;\
+	float* coefficients = (float*)(coefD + coefPitch * tid);\
+	float predicted = 0;\
+	float actual = measurement[nDimensions];\
+	for (int i = 0; i < nCoefficients; ++i) {\
+		float coefficient = coefficients[i];\
+		if (functionMask != 0) {\
+			for (int j = 0; j < nDimensions; ++j) {\
+				float coordinate = measurement[j];\
+				coefficient *= (functionMask & 1) ? powf(coordinate, is[j]) * powf(log2f(coordinate), js[j]) : 1;\
+				functionMask >>= 1;\
+			}\
+		}\
+		predicted += coefficient;\
+	}\
+	float difference = predicted - actual;\
+
+__global__ void kernelRSS
+(uint64_t nThreads, int nCoefficients, int nDimensions, int nTrainMeasurements, uint64_t functionMask,
+char* coefD, size_t coefPitch, float* rssSmape, float* __restrict__ measurement, uint64_t batch) {
+	HEADER_RSS_SMAPE_KERNELS
+
+	rssSmape[tid] += difference * difference;
+}
+
+__global__ void kernelSMAPE
+(uint64_t nThreads, int nCoefficients, int nDimensions, int nTrainMeasurements, uint64_t functionMask,
+char* coefD, size_t coefPitch, float* rssSmape, float* __restrict__ measurement, uint64_t batch) {
+	HEADER_RSS_SMAPE_KERNELS
+
+	float abssum = fabsf(actual) + fabsf(predicted);
+	rssSmape[tid] += (200 * fabsf(difference)) / (nTrainMeasurements * abssum);
+}
